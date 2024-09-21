@@ -18,6 +18,7 @@ cmake --build build --config release
 
 
 ### Example
+#### Template
 ```C++
 #include "TRTinfer.h"
 #include <opencv2/opencv.hpp>
@@ -44,4 +45,32 @@ int main(int argc, char *argv[])
     postprocess(output_blob);
     return 1;
 }
+```
+
+#### YOLOv8
+convert the onnx file to engien file like
+```bash
+trtexec \ 
+--onnx=./pretrain/yolov8n.onnx \
+--saveEngine=./pretrain/yolov8n.engine
+```
+then,change file `example.cc` content,like
+```C++
+int main(int argc, char *argv[])
+{
+    // model
+    TRTInfer model("./pretrain/yolov8n.engine");
+    // image
+    cv::Mat image = cv::imread("path/to/img");
+    ...
+}
+```
+build this example by later command
+```bash
+cmake -S . -B build
+cmake --build ./build --config release -j 12
+```
+run
+```bash
+./build/Release/example.exe
 ```
