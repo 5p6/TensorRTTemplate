@@ -8,30 +8,30 @@
 namespace utilty
 {
     /**
-     * @brief 安全分配gpu内存
-     * @param memSize 需要的gpu内存字节数
-     * @return 分配的GPU内存地址块的地址头
+     *@brief Safely Allocate GPU Memor
+     *@param memSize The required number of GPU memory bytes for
+     *@return The address header of the GPU memory address block allocated by
      */
     void *safeCudaMalloc(size_t memSize);
 
     /**
-     * @brief 安全释放gpu内存
-     * @param ptr gpu地址块的地址头
-     * @return 是否释放成功的标志
+     *@brief Safely Release GPU Memory
+     *@param ptr Address header of  GPU address block
+     *@return Does  release a successful flag
      */
     bool safeCudaFree(void *&ptr);
 
     /**
-     * @brief 获取TensorRT基本类型的字节数
-     * @brief type tensorrt的基本类型
-     * @return 字节数
+     *@brief Get the byte count of TensorRT basic types
+     *@param type The basic types of  tensorrt
+     *@return byte count
      */
     int getTypebytes(const nvinfer1::DataType &type);
 
     /**
-     * @brief 输入一个矩阵的维度和基本类型，输出这个矩阵的全部字节数
-     * @param dim 矩阵的维度
-     * @param type TensorRT的基本数据类型
+     *@brief Input the dimensions and basic types of a matrix, and output the total number of bytes in this matrix
+     *@param dim Dimension of  dim matrix
+     *@param type The basic data types of  TensorRT
      */
     int getTensorbytes(const nvinfer1::Dims &dim, const nvinfer1::DataType &type);
 

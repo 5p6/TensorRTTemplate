@@ -6,3 +6,4 @@ data
 .vscode
 *.rar
 MNIST
+*.engine
