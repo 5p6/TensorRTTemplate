@@ -153,6 +153,7 @@ std::ostream &operator<<(std::ostream &cout, const nvinfer1::DataType &type)
  */
 std::shared_ptr<TRTInfer> TRTInfer::create(const std::string &engine_path)
 {
+    // make_shared 不能调用，因为TRTInfer的构造函数是私有的
     auto model = std::shared_ptr<TRTInfer>(new TRTInfer(engine_path));
     model->Init();
     return model;
