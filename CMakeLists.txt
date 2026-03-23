@@ -3,6 +3,15 @@ cmake_minimum_required(VERSION 3.15)
 project(trttemplate)
 
 set(CMAKE_CXX_STANDARD 17)
+
+# GNU 最高优化级别
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -ffast-math -funroll-loops -flto")
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3 -march=native -mtune=native -ffast-math -funroll-loops -flto")
+
+# 设置 Release 模式为默认
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release)
+endif()
 set(LIB_TYPE SHARED)
 set(CUDA_ROOT_DIR "/usr/local/cuda")
 set(TensorRT_ROOT_DIR "/root/TensorRT")
@@ -46,8 +55,8 @@ include_directories(
 )
 # generate library
 add_library(trtemplate ${LIB_TYPE}
-    ${PROJECT_SOURCE_DIR}/TRTInfer/StreamPool.h
-    ${PROJECT_SOURCE_DIR}/TRTInfer/StreamPool.cc
+    ${PROJECT_SOURCE_DIR}/TRTInfer/StreamContextDecl.h
+    ${PROJECT_SOURCE_DIR}/TRTInfer/StreamContextDecl.cc
     ${PROJECT_SOURCE_DIR}/TRTInfer/config.h
     ${PROJECT_SOURCE_DIR}/TRTInfer/TRTinfer.h
     ${PROJECT_SOURCE_DIR}/TRTInfer/benchmark.h

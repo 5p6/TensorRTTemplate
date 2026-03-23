@@ -12,26 +12,25 @@
 #include <queue>
 
 /**
- * @brief StreamContextPair 结构体
+ * @brief StreamContextDecl 结构体
  *
  * 用于同时管理 CUDA Stream 和对应的 TensorRT ExecutionContext 的数据结构。
  * 包含流、上下文、输入输出绑定的 GPU 显存指针以及输出结果的主机内存。
  */
-struct StreamContextPair
+struct StreamContextDecl
 {
     cudaStream_t stream;                                                   /**< @brief CUDA 流 */
     nvinfer1::IExecutionContext *context;                                  /**< @brief TensorRT 执行上下文（裸指针） */
     std::unordered_map<std::string, void *> inputBindings, outputBindings; /**< @brief 输入输出的 CUDA 显存指针 */
-    // std::unordered_map<std::string, std::shared_ptr<char[]>> outputBlobs;  /**< @brief 输出的主机端内存 */
     std::unordered_map<std::string, void*> outputBlobsPin;                 /**< @brief 输出的主机端锁业内存 */
 
     /// 移动构造函数
-    StreamContextPair(StreamContextPair &&) = default;
+    StreamContextDecl(StreamContextDecl &&) = default;
     /// 移动赋值运算符
-    StreamContextPair &operator=(StreamContextPair &&) = default;
+    StreamContextDecl &operator=(StreamContextDecl &&) = default;
 
     /// 默认构造函数，初始化为空
-    StreamContextPair() : stream(nullptr), context(nullptr) {}
+    StreamContextDecl() : stream(nullptr), context(nullptr) {}
 
     /**
      * @brief 布尔运算符重载
@@ -39,8 +38,8 @@ struct StreamContextPair
      *
      * 用于检查配对是否有效:
      * @code
-     * auto pair = pool.acquire();
-     * if (!pair) return false;
+     * auto Decl = pool.acquire();
+     * if (!Decl) return false;
      * @endcode
      */
     bool operator!() const
@@ -66,15 +65,15 @@ struct StreamContextPair
  * auto pool = std::make_shared<StreamPool>(engine, 4);
  *
  * // 获取配对
- * auto pair = pool->acquire();
- * if (!pair) return false;
+ * auto Decl = pool->acquire();
+ * if (!Decl) return false;
  *
  * // 使用推理
- * pair.context->setInputTensorAddress("input", gpu_ptr);
- * pair.context->enqueueV3(pair.stream);
+ * Decl.context->setInputTensorAddress("input", gpu_ptr);
+ * Decl.context->enqueueV3(Decl.stream);
  *
  * // 归还
- * pool->release(std::move(pair));
+ * pool->release(std::move(Decl));
  * @endcode
  */
 class StreamPool
@@ -109,33 +108,33 @@ public:
     /**
      * @brief 获取一个可用的 Stream + Context 配对
      *
-     * @return StreamContextPair 可用的配对，如果池为空则阻塞等待
+     * @return StreamContextDecl 可用的配对，如果池为空则阻塞等待
      *
      * 如果所有配对都在使用中，调用线程会被阻塞直到有配对被归还。
      * 如果池未初始化，会自动调用 init() 进行初始化。
      *
      * @warning 使用完毕后必须调用 release() 归还配对
      */
-    StreamContextPair acquire();
+    StreamContextDecl acquire();
 
     /**
      * @brief 归还 Stream + Context 配对
      *
-     * @param  pair  要归还的配对（使用移动语义）
+     * @param  Decl  要归还的配对（使用移动语义）
      *
      * 将使用完毕的配对归还到池中，唤醒等待获取的线程。
-     * 归还后 pair 变为空，不应再使用。
+     * 归还后 Decl 变为空，不应再使用。
      */
-    void release(StreamContextPair &&pair);
+    void release(StreamContextDecl &&Decl);
 
     /**
      * @brief 非阻塞尝试获取配对
      *
-     * @return StreamContextPair 可用的配对，如果没有可用则 stream 为 nullptr
+     * @return StreamContextDecl 可用的配对，如果没有可用则 stream 为 nullptr
      *
      * 立即返回，不会阻塞。如果池为空或所有配对都在使用中，返回无效配对。
      */
-    StreamContextPair tryAcquire();
+    StreamContextDecl tryAcquire();
 
     /**
      * @brief 等待所有配对变为可用
@@ -216,7 +215,7 @@ private:
      */
     nvinfer1::IExecutionContext *createContext(nvinfer1::ICudaEngine *engine);
 
-    std::queue<StreamContextPair> pool_; /**< @brief Stream + Context 配对池 */
+    std::queue<StreamContextDecl> pool_; /**< @brief Stream + Context 配对池 */
     nvinfer1::ICudaEngine *engine_;      /**< @brief TensorRT Engine 引用 */
     std::condition_variable cond_;       /**< @brief 条件变量，用于线程同步 */
     mutable std::mutex mutex_;           /**< @brief 互斥锁，保护资源池 */

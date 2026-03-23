@@ -1,4 +1,4 @@
-#include "StreamPool.h"
+#include "StreamContextDecl.h"
 #include "utility.h"
 #include <iostream>
 /**
@@ -36,16 +36,16 @@ void StreamPool::init(nvinfer1::ICudaEngine *engine, int num_streams)
     // 创建 Stream + Context 配对
     for (int i = 0; i < num_streams; i++)
     {
-        StreamContextPair pair;
+        StreamContextDecl Decl;
 
         // 创建 CUDA Stream
-        cudaStreamCreate(&pair.stream);
+        cudaStreamCreate(&Decl.stream);
 
         // 创建 ExecutionContext（使用裸指针，StreamPool 管理生命周期）
-        pair.context = createContext(engine_);
+        Decl.context = createContext(engine_);
 
         // 移动语义
-        pool_.push(std::move(pair));
+        pool_.push(std::move(Decl));
     }
 
     initialized_ = true;
@@ -75,23 +75,23 @@ StreamPool::~StreamPool()
     // 销毁所有配对
     while (!pool_.empty())
     {
-        auto &pair = pool_.front();
-        if (pair.stream != nullptr)
+        auto &Decl = pool_.front();
+        if (Decl.stream != nullptr)
         {
-            cudaStreamDestroy(pair.stream);
+            cudaStreamDestroy(Decl.stream);
         }
-        if (pair.context != nullptr)
+        if (Decl.context != nullptr)
         {
-            delete pair.context;
+            delete Decl.context;
         }
-        
-        for (auto &bind : pair.outputBindings)
+
+        for (auto &bind : Decl.outputBindings)
             utility::safeCudaFree(bind.second);
 
-        for (auto &bind : pair.inputBindings)
+        for (auto &bind : Decl.inputBindings)
             utility::safeCudaFree(bind.second);
 
-        for (auto &bind : pair.outputBlobsPin)
+        for (auto &bind : Decl.outputBlobsPin)
             utility::safeCudaFreeHost(bind.second);
         pool_.pop(); // 弹出
     }
@@ -102,7 +102,7 @@ StreamPool::~StreamPool()
 /**
  * @brief 获取可用的配对（阻塞）
  */
-StreamContextPair StreamPool::acquire()
+StreamContextDecl StreamPool::acquire()
 {
     std::unique_lock<std::mutex> lock(mutex_);
 
@@ -112,7 +112,7 @@ StreamContextPair StreamPool::acquire()
 
     if (shutting_down_ || !initialized_)
     {
-        return StreamContextPair();
+        return StreamContextDecl();
     }
 
     // 找到可用配对并标记为使用中
@@ -120,34 +120,34 @@ StreamContextPair StreamPool::acquire()
     {
         if (pool_.empty())
             break;
-        StreamContextPair result = std::move(pool_.front());
+        StreamContextDecl result = std::move(pool_.front());
         pool_.pop();
         return result;
     }
 
-    return StreamContextPair();
+    return StreamContextDecl();
 }
 
 /**
  * @brief 归还配对
  */
-void StreamPool::release(StreamContextPair &&pair)
+void StreamPool::release(StreamContextDecl &&Decl)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    pool_.push(std::move(pair));
+    pool_.push(std::move(Decl));
     cond_.notify_one();
 }
 
 /**
  * @brief 非阻塞尝试获取配对
  */
-StreamContextPair StreamPool::tryAcquire()
+StreamContextDecl StreamPool::tryAcquire()
 {
     std::lock_guard<std::mutex> lock(mutex_);
 
     if (shutting_down_ || !initialized_ || !hasAvailable())
     {
-        return StreamContextPair();
+        return StreamContextDecl();
     }
 
     // 找到可用配对并标记为使用中
@@ -155,12 +155,12 @@ StreamContextPair StreamPool::tryAcquire()
     {
         if (pool_.empty())
             break;
-        StreamContextPair result = std::move(pool_.front());
+        StreamContextDecl result = std::move(pool_.front());
         pool_.pop();
         return result;
     }
 
-    return StreamContextPair();
+    return StreamContextDecl();
 }
 
 /**

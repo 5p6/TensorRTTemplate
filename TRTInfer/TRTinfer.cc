@@ -10,7 +10,7 @@
 #include <unordered_map>
 #include <memory>
 #include "utility.h"
-#include "StreamPool.h"
+#include "StreamContextDecl.h"
 
 /**
  * @brief 输出 nvinfer1::Dims 维度的流操作符
@@ -91,48 +91,45 @@ public:
 
 namespace TRT
 {
+    /**
+     * @brief 推理任务封装类
+     *
+     * 封装推理函数和参数，通过 promise/future 返回结果
+     */
+    class InferTask
+    {
+    public:
+        InferTask(std::function<BlobType(const BlobType &)> F,
+                  const BlobType &args) : task_(F), args_(args) {}
 
+        void execute()
+        {
+            try
+            {
+                promise_.set_value(std::invoke(task_, args_));
+            }
+            catch (...)
+            {
+                promise_.set_exception(std::current_exception());
+            }
+        }
+
+        std::future<BlobType> get_future()
+        {
+            return promise_.get_future();
+        }
+
+    private:
+        std::function<BlobType(const BlobType &)> task_;
+        const BlobType &args_;
+        std::promise<BlobType> promise_;
+    };
     /**
      * @brief TRTInfer 实现类 (Pimpl 模式)
      */
     class TRTInfer::Impl
     {
-
-    private:
-        /**
-         * @brief 推理任务封装类
-         *
-         * 封装推理函数和参数，通过 promise/future 返回结果
-         */
-        class InferTask
-        {
-        public:
-            InferTask(std::function<BlobType(const BlobType &)> F,
-                      const BlobType &args) : task_(F), args_(args) {}
-
-            void execute()
-            {
-                try
-                {
-                    promise_.set_value(std::invoke(task_, args_));
-                }
-                catch (...)
-                {
-                    promise_.set_exception(std::current_exception());
-                }
-            }
-
-            std::future<BlobType> get_future()
-            {
-                return promise_.get_future();
-            }
-
-        private:
-            std::function<BlobType(const BlobType &)> task_;
-            const BlobType &args_;
-            std::promise<BlobType> promise_;
-        };
-
+        friend class InferTask;
     public:
         /** @brief 构造函数 */
         Impl(const std::string &engine_path, int num_thread, TRTInfer *parent);
@@ -197,9 +194,6 @@ namespace TRT
                            std::unordered_map<std::string, void *> &outputBindings,
                            nvinfer1::IExecutionContext *context);
 
-        /** @brief 分配输出主机内存 */
-        void allocOutBlob(std::unordered_map<std::string, std::shared_ptr<char[]>> &outputBlob);
-
         /** @brief 分配输出主机锁业内存 */
         void allocOutBlobPinned(std::unordered_map<std::string, void *> &outputBlobPin);
 
@@ -209,12 +203,6 @@ namespace TRT
                          std::unordered_map<std::string, void *> &inputBindings,
                          cudaStream_t stream,
                          nvinfer1::IExecutionContext *context);
-
-        /** @brief 下载输出数据到 CPU */
-        void downloadOutput(std::unordered_map<std::string, std::shared_ptr<char[]>> &output_blob,
-                            cudaStream_t stream,
-                            nvinfer1::IExecutionContext *context,
-                            std::unordered_map<std::string, void *> &OutputBindings);
         /** @brief 下载输出数据到 CPU */
         void downloadOutputPin(const std::string &name,
                                std::unordered_map<std::string, void *> &output_blob_pin,
@@ -450,17 +438,7 @@ namespace TRT
         }
     }
 
-    /**
-     * @brief 分配输出主机内存
-     */
-    void TRTInfer::Impl::allocOutBlob(std::unordered_map<std::string, std::shared_ptr<char[]>> &outputBlob)
-    {
-        for (const auto &name : output_names_)
-        {
-            size_t datasize = output_size_[name];
-            outputBlob[name] = std::shared_ptr<char[]>(new char[datasize]);
-        }
-    }
+
     void TRTInfer::Impl::allocOutBlobPinned(std::unordered_map<std::string, void *> &outputBlobPin)
     {
         for (const auto &name : output_names_)
@@ -489,34 +467,34 @@ namespace TRT
     BlobType TRTInfer::Impl::infer_task(const BlobType &input_blob)
     {
         // 获取资源
-        auto pair = streampool_->acquire();
-        if (!pair)
+        auto Decl = streampool_->acquire();
+        if (!Decl)
         {
-            std::cout << "[TRTInfer] pair empty!" << std::endl;
+            std::cout << "[TRTInfer] Decl empty!" << std::endl;
             return BlobType{};
         }
 
         // 延迟归还
-        utility::Defer defer([&pair, this]()
-                             { this->streampool_->release(std::move(pair)); });
+        utility::Defer defer([&Decl, this]()
+                             { this->streampool_->release(std::move(Decl)); });
 
         // 上传输入
         for (const auto &[name, mat] : input_blob)
         {
-            uploadInput(name, mat, pair.inputBindings, pair.stream, pair.context);
+            uploadInput(name, mat, Decl.inputBindings, Decl.stream, Decl.context);
         }
 
         // 执行推理
-        pair.context->enqueueV3(pair.stream);
+        Decl.context->enqueueV3(Decl.stream);
 
         // 下载输出
-        // downloadOutput(pair.outputBlobs, pair.stream, pair.context, pair.outputBindings);
-        for(const auto& name : output_names_){
-            downloadOutputPin(name, pair.outputBlobsPin, pair.stream, pair.context, pair.outputBindings);
+        for (const auto &name : output_names_)
+        {
+            downloadOutputPin(name, Decl.outputBlobsPin, Decl.stream, Decl.context, Decl.outputBindings);
         }
 
         // 等待完成
-        cudaStreamSynchronize(pair.stream);
+        cudaStreamSynchronize(Decl.stream);
 
         // 封装结果
         BlobType tmp_results;
@@ -526,7 +504,7 @@ namespace TRT
                 output_shape_[name].size(),
                 output_shape_[name].data(),
                 utility::typeRt2Cv(engine_->getTensorDataType(name.c_str())),
-                pair.outputBlobsPin[name]);
+                Decl.outputBlobsPin[name]);
             tmp_results[name] = temp.clone();
         }
         return tmp_results;
@@ -597,39 +575,6 @@ namespace TRT
         context->setInputTensorAddress(name.c_str(), cuda_ptr);
     }
 
-    /**
-     * @brief 下载输出数据到 CPU
-     */
-    void TRTInfer::Impl::downloadOutput(std::unordered_map<std::string, std::shared_ptr<char[]>> &output_blob,
-                                        cudaStream_t stream,
-                                        nvinfer1::IExecutionContext *context,
-                                        std::unordered_map<std::string, void *> &OutputBindings)
-    {
-        for (const auto &name : output_names_)
-        {
-            // 获取实际输出形状
-            nvinfer1::Dims out_shape = context->getTensorShape(name.c_str());
-            size_t actual_size = utility::getTensorbytes(out_shape, engine_->getTensorDataType(name.c_str()));
-
-            // 验证缓冲区
-            if (actual_size != output_size_[name])
-            {
-                std::cerr << "[ERROR] Output buffer size insufficient for '" << name << "': "
-                          << "required " << actual_size << " bytes, "
-                          << "but only " << output_size_[name] << " bytes allocated" << std::endl;
-                throw std::runtime_error("Output buffer size insufficient");
-            }
-
-            // 拷贝到主机
-            void *ptr = static_cast<void *>(output_blob[name].get());
-            cudaError_t err = cudaMemcpyAsync(ptr, OutputBindings[name], actual_size, cudaMemcpyDeviceToHost, stream);
-            if (err != cudaSuccess)
-            {
-                std::cerr << "[TRTInfer::Impl] CUDA memcpyAsync failed: " << cudaGetErrorString(err) << std::endl;
-                throw std::runtime_error(cudaGetErrorString(err));
-            }
-        }
-    }
     /**
      * @brief 下载输出数据到 CPU
      */
@@ -719,11 +664,10 @@ namespace TRT
         streampool_ = std::make_shared<StreamPool>(this->engine_.get(), num_threads_);
         for (int i = 0; i < num_threads_; i++)
         {
-            auto pair = streampool_->acquire();
-            allocBindings(pair.inputBindings, pair.outputBindings, pair.context);
-            allocOutBlobPinned(pair.outputBlobsPin);
-            // allocOutBlob(pair.outputBlobs);
-            streampool_->release(std::move(pair));
+            auto Decl = streampool_->acquire();
+            allocBindings(Decl.inputBindings, Decl.outputBindings, Decl.context);
+            allocOutBlobPinned(Decl.outputBlobsPin);
+            streampool_->release(std::move(Decl));
         }
     }
 
