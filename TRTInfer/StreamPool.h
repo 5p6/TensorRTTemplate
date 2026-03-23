@@ -22,7 +22,8 @@ struct StreamContextPair
     cudaStream_t stream;                                                   /**< @brief CUDA 流 */
     nvinfer1::IExecutionContext *context;                                  /**< @brief TensorRT 执行上下文（裸指针） */
     std::unordered_map<std::string, void *> inputBindings, outputBindings; /**< @brief 输入输出的 CUDA 显存指针 */
-    std::unordered_map<std::string, std::shared_ptr<char[]>> outputBlobs;  /**< @brief 输出的主机端内存 */
+    // std::unordered_map<std::string, std::shared_ptr<char[]>> outputBlobs;  /**< @brief 输出的主机端内存 */
+    std::unordered_map<std::string, void*> outputBlobsPin;                 /**< @brief 输出的主机端锁业内存 */
 
     /// 移动构造函数
     StreamContextPair(StreamContextPair &&) = default;

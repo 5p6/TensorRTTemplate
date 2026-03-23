@@ -84,10 +84,15 @@ StreamPool::~StreamPool()
         {
             delete pair.context;
         }
+        
         for (auto &bind : pair.outputBindings)
             utility::safeCudaFree(bind.second);
+
         for (auto &bind : pair.inputBindings)
             utility::safeCudaFree(bind.second);
+
+        for (auto &bind : pair.outputBlobsPin)
+            utility::safeCudaFreeHost(bind.second);
         pool_.pop(); // 弹出
     }
 

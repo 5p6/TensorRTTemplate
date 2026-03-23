@@ -51,6 +51,37 @@ namespace utility
         ptr = nullptr; // Set pointer to nullptr after freeing
         return true;
     }
+
+    void *safeCudaMallocHost(size_t memSize)
+    {
+        void *deviceMem;
+        cudaError_t status = cudaMallocHost(&deviceMem, memSize);
+        if (status != cudaSuccess)
+        {
+            std::cerr << "cudaMallocHost failed: " << cudaGetErrorString(status) << std::endl;
+            return nullptr;
+        }
+        return deviceMem;
+    }
+
+    bool safeCudaFreeHost(void *&ptr)
+    {
+        if (ptr == nullptr)
+        {
+            std::cerr << "Pointer is already nullptr." << std::endl;
+            return false;
+        }
+        cudaError_t result = cudaFreeHost(ptr);
+        if (result != cudaSuccess)
+        {
+            std::cerr << "Failed to free CPU Pinned memory: " << cudaGetErrorString(result) << std::endl;
+            return false;
+        }
+        std::cout << "CPU Pinned memory successfully freed." << std::endl;
+        ptr = nullptr; // Set pointer to nullptr after freeing
+        return true;
+    }
+
     size_t getTypebytes(const nvinfer1::DataType &type)
     {
         switch (type)

@@ -98,6 +98,30 @@ namespace utility
      */
     TRTInfer_API bool safeCudaFree(void *&ptr);
 
+
+    /**
+     * @brief 安全分配 CPU 锁业内存
+     *
+     * @param  memSize     需要分配的字节数
+     * @return void*       分配得到的 CPU 锁业内存指针，失败返回 nullptr
+     *
+     * 封装 cudaMalloc，添加错误检查和日志输出。
+     * 注意: 分配失败会打印错误信息但不会抛异常。
+     */
+    TRTInfer_API void *safeCudaMallocHost(size_t memSize);
+
+    /**
+     * @brief 安全释放 CPU 锁业内存
+     *
+     * @param  ptr         CPU 锁业内存指针的引用
+     * @return bool        释放成功返回 true，失败返回 false
+     *
+     * 封装 cudaFreeHost，释放后将指针置为 nullptr。
+     */
+    TRTInfer_API bool safeCudaFreeHost(void *&ptr);
+
+
+
     /**
      * @brief 获取 TensorRT 基本类型的字节大小
      *

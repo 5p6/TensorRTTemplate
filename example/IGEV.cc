@@ -147,7 +147,7 @@ int main(int argc, char *argv[])
     std::string right_path = "/root/code/C++/TensorRTTemplate/demo/right.png";
     std::string engine_path = "/root/code/python/StereoMatch/StereoAlgorithms/IGEV-Stereo/model_480_752.engine";
 
-    int warmup_times = 100;
+    int warmup_times = 10;
     int test_times = 100;
     
     std::vector<std::unordered_map<std::string, cv::Mat>> warmup_inputblobs;
