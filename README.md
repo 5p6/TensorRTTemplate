@@ -48,7 +48,7 @@ set(LIB_TYPE SHARED)  # Options: SHARED (.so) or STATIC
 - `LIB_TYPE = STATIC`: Build as static library (Windows: `.lib`, Linux: `.a`)
 
 
-### Benchmark
+### 📊 Benchmark
 测试设备
 * GPU : Nvidia 4060Ti 16G
 * CPU : i5-12600kf 12核16线程
