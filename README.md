@@ -48,6 +48,40 @@ set(LIB_TYPE SHARED)  # Options: SHARED (.so) or STATIC
 - `LIB_TYPE = STATIC`: Build as static library (Windows: `.lib`, Linux: `.a`)
 
 
+### Benchmark
+测试设备
+* GPU : Nvidia 4060Ti 16G
+* CPU : i5-12600kf 12核16线程
+
+
+测试模型
+
+* 目标检测 - YOLO
+
+| 模型 | 480×640 | 480×1280 | 736×1280 |
+|:---|:---:|:---:|:---:|
+| YOLO26l (Pytorch - FP32) | 19.29 | 22.06 | 41.06 |
+| YOLO26l (TensorRT - FP32) | 7.01 | 11.99| 18.77 |
+| YOLO26l (TensorRT - FP16) | 3.36 | 4.92 | 6.08 |
+| YOLO26l (TensorRT - INT8) | 3.29 | 3.38 | 4.03 |
+
+
+* 语义分割
+
+todo
+
+* 立体视觉 - IGEV-Stereo
+
+| 模型 | 480×736 | 480×1280 | 736×1280 |
+|:---|:---:|:---:|:---:|
+| IGEV-Stereo (Pytorch - FP32) | 120.9 | 206.1 | 326.8 |
+| IGEV-Stereo (TensorRT - FP32) | - | - | - |
+| IGEV-Stereo (TensorRT - FP16) | 30 | - | - |
+| IGEV-Stereo (TensorRT - INT8) | - | - | - |
+
+todo
+
+
 ### 📦 Build
 
 #### Windows Setup
