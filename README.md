@@ -49,14 +49,14 @@ set(LIB_TYPE SHARED)  # Options: SHARED (.so) or STATIC
 
 
 ### 📊 Benchmark
-测试设备
-* GPU : Nvidia 4060Ti 16G
-* CPU : i5-12600kf 12核16线程
+Test Device
 
+GPU : Nvidia 4060Ti 16G
+CPU : i5-12600kf 12-core 16-thread
 
-测试模型包括 目标检测、语义分割、立体匹配算法，在三个图像尺寸上进行测试，每张表格的数字以ms为单位。
+The test models include object detection, semantic segmentation, and stereo matching algorithms, tested at three image sizes, with numbers in each table in **milliseconds**.
 
-* 目标检测 - YOLO26
+* Object Detection - YOLO26 (ms)
 
 | 模型 | 480×640 | 480×1280 | 736×1280 |
 |:---|:---:|:---:|:---:|
@@ -66,11 +66,11 @@ set(LIB_TYPE SHARED)  # Options: SHARED (.so) or STATIC
 | YOLO26l (TensorRT - INT8) | 3.29 | 3.38 | 4.03 |
 
 
-* 语义分割
+* Segmentation
 
 todo
 
-* 立体视觉 - IGEV-Stereo
+* Stereo Match - IGEV-Stereo (ms)
 
 | 模型 | 480×736 | 480×1280 | 736×1280 |
 |:---|:---:|:---:|:---:|
