@@ -54,9 +54,9 @@ set(LIB_TYPE SHARED)  # Options: SHARED (.so) or STATIC
 * CPU : i5-12600kf 12核16线程
 
 
-测试模型
+测试模型包括 目标检测、语义分割、立体匹配算法，在三个图像尺寸上进行测试，每张表格的数字以ms为单位。
 
-* 目标检测 - YOLO
+* 目标检测 - YOLO26
 
 | 模型 | 480×640 | 480×1280 | 736×1280 |
 |:---|:---:|:---:|:---:|
@@ -75,11 +75,12 @@ todo
 | 模型 | 480×736 | 480×1280 | 736×1280 |
 |:---|:---:|:---:|:---:|
 | IGEV-Stereo (Pytorch - FP32) | 120.9 | 206.1 | 326.8 |
-| IGEV-Stereo (TensorRT - FP32) | - | - | - |
-| IGEV-Stereo (TensorRT - FP16) | 30 | - | - |
-| IGEV-Stereo (TensorRT - INT8) | - | - | - |
+| IGEV-Stereo (TensorRT - FP32) | 65.2 | 118.9 | 207.2|
+| IGEV-Stereo (TensorRT - FP16) | 30.1 | 45.89 | 88.34  |
+| IGEV-Stereo (TensorRT - INT8) | 18.01 | 33.98 | 67.35 |
 
 todo
+
 
 
 ### 📦 Build
