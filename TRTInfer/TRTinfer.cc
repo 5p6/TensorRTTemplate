@@ -9,6 +9,7 @@
 #include <map>
 #include <unordered_map>
 #include <memory>
+#include <cstring>
 #include "utility.h"
 #include "StreamContextDecl.h"
 
@@ -94,34 +95,19 @@ namespace TRT
     /**
      * @brief 推理任务封装类
      *
-     * 封装推理函数和参数，通过 promise/future 返回结果
+     * 只持有输入与 promise；具体推理由工作线程用自己绑定的 ctx 执行。
      */
     class InferTask
     {
     public:
-        InferTask(std::function<BlobType(const BlobType &)> F,
-                  const BlobType &args) : task_(F), args_(args) {}
+        explicit InferTask(const BlobType &args) : args_(args) {}
 
-        void execute()
-        {
-            try
-            {
-                promise_.set_value(std::invoke(task_, args_));
-            }
-            catch (...)
-            {
-                promise_.set_exception(std::current_exception());
-            }
-        }
-
-        std::future<BlobType> get_future()
-        {
-            return promise_.get_future();
-        }
+        const BlobType &args() const { return args_; }
+        std::promise<BlobType> &promise() { return promise_; }
+        std::future<BlobType> get_future() { return promise_.get_future(); }
 
     private:
-        std::function<BlobType(const BlobType &)> task_;
-        const BlobType &args_;
+        const BlobType args_; // 按值持有：异步任务执行前调用方可能已销毁原始 blob
         std::promise<BlobType> promise_;
     };
     /**
@@ -129,7 +115,6 @@ namespace TRT
      */
     class TRTInfer::Impl
     {
-        friend class InferTask;
     public:
         /** @brief 构造函数 */
         Impl(const std::string &engine_path, int num_thread, TRTInfer *parent);
@@ -143,8 +128,8 @@ namespace TRT
         /** @brief 同步推理 */
         BlobType infer(const BlobType &input_blob);
 
-        /** @brief 实际推理任务执行 */
-        BlobType infer_task(const BlobType &input_blob);
+        /** @brief 实际推理任务执行 (使用调用线程绑定的 ctx) */
+        BlobType infer_task(StreamContextDecl &ctx, const BlobType &input_blob);
 
         /** @brief 初始化引擎和资源 */
         void Initialized();
@@ -171,8 +156,8 @@ namespace TRT
         }
 
     private:
-        /** @brief 工作线程函数 */
-        void workThread();
+        /** @brief 工作线程函数 (绑定固定的 stream/context) */
+        void workThread(int idx);
 
         /** @brief 从文件加载引擎 */
         void LoadEngine(const std::string &engine_path);
@@ -194,21 +179,17 @@ namespace TRT
                            std::unordered_map<std::string, void *> &outputBindings,
                            nvinfer1::IExecutionContext *context);
 
-        /** @brief 分配输出主机锁业内存 */
+        /** @brief 分配输入主机锁页内存 (H2D 暂存) */
+        void allocInBlobPinned(std::unordered_map<std::string, void *> &inputBlobPin);
+
+        /** @brief 分配输出主机锁页内存 */
         void allocOutBlobPinned(std::unordered_map<std::string, void *> &outputBlobPin);
 
-        /** @brief 上传输入数据到 GPU */
-        void uploadInput(const std::string &name,
-                         const cv::Mat &mat,
-                         std::unordered_map<std::string, void *> &inputBindings,
-                         cudaStream_t stream,
-                         nvinfer1::IExecutionContext *context);
-        /** @brief 下载输出数据到 CPU */
-        void downloadOutputPin(const std::string &name,
-                               std::unordered_map<std::string, void *> &output_blob_pin,
-                               cudaStream_t stream,
-                               nvinfer1::IExecutionContext *context,
-                               std::unordered_map<std::string, void *> &OutputBindings);
+        /** @brief 上传输入数据到 GPU (host -> pinned -> device) */
+        void uploadInput(const std::string &name, const cv::Mat &mat, StreamContextDecl &ctx);
+
+        /** @brief 下载输出数据到 CPU (device -> pinned) */
+        void downloadOutputPin(const std::string &name, StreamContextDecl &ctx);
 
     private:
         std::string engine_path_;  /**< @brief 引擎文件路径 */
@@ -229,7 +210,7 @@ namespace TRT
     private:
         std::queue<std::unique_ptr<InferTask>> task_queues_; /**< @brief 任务队列 */
 
-        std::shared_ptr<StreamPool> streampool_; /**< @brief Stream 池 */
+        std::vector<StreamContextDecl> stream_ctxs_; /**< @brief 每线程独占的 stream/context/缓冲 (须在 engine_ 之后销毁) */
 
         int num_threads_;                     /**< @brief 线程数量 */
         bool b_stop_ = false;                 /**< @brief 停止标志 */
@@ -303,7 +284,10 @@ namespace TRT
     TRTInfer::Impl::~Impl()
     {
         std::cout << "[TRTInfer::Impl] 开始关闭" << std::endl;
-        b_stop_ = true;
+        {
+            std::lock_guard<std::mutex> lock(task_mutext_);
+            b_stop_ = true;
+        }
         cond_.notify_all();
         for (auto &thread : thread_pool)
             thread.join();
@@ -439,6 +423,17 @@ namespace TRT
     }
 
 
+    void TRTInfer::Impl::allocInBlobPinned(std::unordered_map<std::string, void *> &inputBlobPin)
+    {
+        for (const auto &name : input_names_)
+        {
+            void *ptr = utility::safeCudaMallocHost(input_size_[name]);
+            if (!ptr)
+                throw std::runtime_error("Failed to allocate pinned host memory");
+            inputBlobPin[name] = ptr;
+        }
+    }
+
     void TRTInfer::Impl::allocOutBlobPinned(std::unordered_map<std::string, void *> &outputBlobPin)
     {
         for (const auto &name : output_names_)
@@ -446,7 +441,7 @@ namespace TRT
             size_t datasize = output_size_[name];
             void *ptr = utility::safeCudaMallocHost(datasize);
             if (!ptr)
-                throw std::runtime_error("Failed to allocate GPU memory");
+                throw std::runtime_error("Failed to allocate pinned host memory");
             outputBlobPin[name] = ptr;
         }
     }
@@ -462,39 +457,31 @@ namespace TRT
     }
 
     /**
-     * @brief 执行推理任务
+     * @brief 执行推理任务 (使用调用线程独占的 ctx，无需加锁获取资源)
      */
-    BlobType TRTInfer::Impl::infer_task(const BlobType &input_blob)
+    BlobType TRTInfer::Impl::infer_task(StreamContextDecl &ctx, const BlobType &input_blob)
     {
-        // 获取资源
-        auto Decl = streampool_->acquire();
-        if (!Decl)
-        {
-            std::cout << "[TRTInfer] Decl empty!" << std::endl;
-            return BlobType{};
-        }
-
-        // 延迟归还
-        utility::Defer defer([&Decl, this]()
-                             { this->streampool_->release(std::move(Decl)); });
-
         // 上传输入
         for (const auto &[name, mat] : input_blob)
         {
-            uploadInput(name, mat, Decl.inputBindings, Decl.stream, Decl.context);
+            uploadInput(name, mat, ctx);
         }
 
         // 执行推理
-        Decl.context->enqueueV3(Decl.stream);
+        if (!ctx.context->enqueueV3(ctx.stream))
+        {
+            std::cerr << "[TRTInfer::Impl] enqueueV3 failed" << std::endl;
+            throw std::runtime_error("[TRTInfer::Impl] enqueueV3 failed");
+        }
 
         // 下载输出
         for (const auto &name : output_names_)
         {
-            downloadOutputPin(name, Decl.outputBlobsPin, Decl.stream, Decl.context, Decl.outputBindings);
+            downloadOutputPin(name, ctx);
         }
 
         // 等待完成
-        cudaStreamSynchronize(Decl.stream);
+        cudaStreamSynchronize(ctx.stream);
 
         // 封装结果
         BlobType tmp_results;
@@ -504,7 +491,7 @@ namespace TRT
                 output_shape_[name].size(),
                 output_shape_[name].data(),
                 utility::typeRt2Cv(engine_->getTensorDataType(name.c_str())),
-                Decl.outputBlobsPin[name]);
+                ctx.outputBlobsPin[name]);
             tmp_results[name] = temp.clone();
         }
         return tmp_results;
@@ -513,96 +500,73 @@ namespace TRT
     /**
      * @brief 上传输入数据到 GPU
      */
-    void TRTInfer::Impl::uploadInput(
-        const std::string &name,
-        const cv::Mat &mat,
-        std::unordered_map<std::string, void *> &inputBindings,
-        cudaStream_t stream,
-        nvinfer1::IExecutionContext *context)
+    void TRTInfer::Impl::uploadInput(const std::string &name, const cv::Mat &mat, StreamContextDecl &ctx)
     {
-        cv::Mat cpu_ptr = mat;
-
-        // 类型转换
-        if (utility::typeCv2Rt(cpu_ptr.type()) != engine_->getTensorDataType(name.c_str()))
-        {
-            cpu_ptr.convertTo(cpu_ptr, utility::typeRt2Cv(engine_->getTensorDataType(name.c_str())));
-        }
-
-        auto iter = inputBindings.find(name);
-        if (iter == inputBindings.end())
+        auto bind_it = ctx.inputBindings.find(name);
+        if (bind_it == ctx.inputBindings.end())
             return;
 
-        void *cuda_ptr = iter->second;
+        cv::Mat cpu_mat = mat;
 
-        // 计算大小并验证
-        nvinfer1::Dims dims;
-        dims.nbDims = current_input_shapes_[name].size();
-        for (size_t i = 0; i < current_input_shapes_[name].size(); i++)
+        // 类型转换 (按需)
+        const nvinfer1::DataType dtype = engine_->getTensorDataType(name.c_str());
+        if (utility::typeCv2Rt(cpu_mat.type()) != dtype)
+            cpu_mat.convertTo(cpu_mat, utility::typeRt2Cv(dtype));
+
+        // 非连续数据 memcpy 会拷错，clone 成连续内存
+        if (!cpu_mat.isContinuous())
         {
-            dims.d[i] = current_input_shapes_[name][i];
+            std::cerr << "[TRTInfer::Impl - WARNING] Input cv::Mat for '" << name << "' is not continuous, cloning" << std::endl;
+            cpu_mat = cpu_mat.clone();
         }
-        size_t data_size = utility::getTensorbytes(dims, engine_->getTensorDataType(name.c_str()));
 
-        size_t mat_size = cpu_ptr.total() * cpu_ptr.elemSize();
-        if (data_size != mat_size)
+        // 大小校验 (使用初始化时缓存的字节数)
+        const size_t expect = input_size_.at(name);
+        const size_t mat_size = cpu_mat.total() * cpu_mat.elemSize();
+        if (expect != mat_size)
         {
             std::cerr << "[TRTInfer::Impl - ERROR] Input tensor size mismatch for '" << name << "': "
-                      << "required " << data_size << " bytes, "
-                      << "but cv::Mat has " << mat_size << " bytes. "
-                      << "Mat shape: " << cpu_ptr.size[0] << "x" << cpu_ptr.size[1] << "x" << cpu_ptr.size[2] << "x" << cpu_ptr.size[3]
-                      << ", expected tensor shape: ";
-            for (size_t i = 0; i < current_input_shapes_.at(name).size(); i++)
-            {
-                std::cerr << current_input_shapes_.at(name)[i] << (i < current_input_shapes_.at(name).size() - 1 ? "x" : "");
-            }
-            std::cerr << std::endl;
+                      << "required " << expect << " bytes, but cv::Mat has " << mat_size << " bytes" << std::endl;
             throw std::runtime_error("[TRTInfer::Impl] Input tensor size mismatch");
         }
 
-        // 检查连续性
-        if (!cpu_ptr.isContinuous())
-        {
-            std::cerr << "[TRTInfer::Impl - WARNING] Input cv::Mat for '" << name << "' is not continuous" << std::endl;
-        }
+        // host -> pinned -> device：先拷进锁页暂存，再异步 H2D，使传输可与其他流计算重叠
+        void *pinned = ctx.inputBlobsPin.at(name);
+        std::memcpy(pinned, cpu_mat.data, expect);
 
-        // 拷贝到 GPU
-        cudaError_t err = cudaMemcpyAsync(cuda_ptr, cpu_ptr.data, data_size, cudaMemcpyHostToDevice, stream);
+        cudaError_t err = cudaMemcpyAsync(bind_it->second, pinned, expect, cudaMemcpyHostToDevice, ctx.stream);
         if (err != cudaSuccess)
         {
-            std::cerr << "[TRTInfer::Impl] CUDA memcpyAsync failed: " << cudaGetErrorString(err) << std::endl;
+            std::cerr << "[TRTInfer::Impl] CUDA memcpyAsync (H2D) failed: " << cudaGetErrorString(err) << std::endl;
             throw std::runtime_error(cudaGetErrorString(err));
         }
-        context->setInputTensorAddress(name.c_str(), cuda_ptr);
+        ctx.context->setInputTensorAddress(name.c_str(), bind_it->second);
     }
 
     /**
-     * @brief 下载输出数据到 CPU
+     * @brief 下载输出数据到 CPU 锁页内存
      */
-    void TRTInfer::Impl::downloadOutputPin(const std::string &name,
-                                           std::unordered_map<std::string, void *> &output_blob,
-                                           cudaStream_t stream,
-                                           nvinfer1::IExecutionContext *context,
-                                           std::unordered_map<std::string, void *> &OutputBindings)
+    void TRTInfer::Impl::downloadOutputPin(const std::string &name, StreamContextDecl &ctx)
     {
         // 获取实际输出形状
-        nvinfer1::Dims out_shape = context->getTensorShape(name.c_str());
+        nvinfer1::Dims out_shape = ctx.context->getTensorShape(name.c_str());
         size_t actual_size = utility::getTensorbytes(out_shape, engine_->getTensorDataType(name.c_str()));
 
         // 验证缓冲区
-        if (actual_size != output_size_[name])
+        if (actual_size != output_size_.at(name))
         {
-            std::cerr << "[ERROR] Output buffer size insufficient for '" << name << "': "
-                      << "required " << actual_size << " bytes, "
-                      << "but only " << output_size_[name] << " bytes allocated" << std::endl;
-            throw std::runtime_error("Output buffer size insufficient");
+            std::cerr << "[ERROR] Output buffer size mismatch for '" << name << "': "
+                      << "actual " << actual_size << " bytes, but " << output_size_.at(name)
+                      << " bytes allocated" << std::endl;
+            throw std::runtime_error("Output buffer size mismatch");
         }
 
         // 拷贝到主机
-        void *ptr = static_cast<void *>(output_blob[name]);
-        cudaError_t err = cudaMemcpyAsync(ptr, OutputBindings[name], actual_size, cudaMemcpyDeviceToHost, stream);
+        cudaError_t err = cudaMemcpyAsync(ctx.outputBlobsPin.at(name), ctx.outputBindings.at(name),
+                                          actual_size, cudaMemcpyDeviceToHost, ctx.stream);
         if (err != cudaSuccess)
         {
-            std::cerr << "[TRTInfer::Impl] CUDA memcpyAsync failed: " << cudaGetErrorString(err) << std::endl;
+            std::cerr << "[TRTInfer::Impl] CUDA memcpyAsync (D2H) failed: " << cudaGetErrorString(err) << std::endl;
             throw std::runtime_error(cudaGetErrorString(err));
         }
     }
@@ -612,22 +576,22 @@ namespace TRT
      */
     std::future<BlobType> TRTInfer::Impl::PostQueue(const BlobType &input_blob)
     {
-        auto task = std::make_unique<InferTask>(
-            std::bind(&TRTInfer::Impl::infer_task, this, std::placeholders::_1), static_cast<const BlobType &>(input_blob));
+        auto task = std::make_unique<InferTask>(input_blob);
         auto future = task->get_future();
         {
             std::lock_guard<std::mutex> lock(task_mutext_);
             task_queues_.push(std::move(task));
-            cond_.notify_one();
         }
+        cond_.notify_one();
         return future;
     }
 
     /**
-     * @brief 工作线程函数
+     * @brief 工作线程函数：独占 stream_ctxs_[idx]，循环取任务执行
      */
-    void TRTInfer::Impl::workThread()
+    void TRTInfer::Impl::workThread(int idx)
     {
+        StreamContextDecl &ctx = stream_ctxs_[idx];
         while (true)
         {
             std::unique_ptr<InferTask> task;
@@ -635,50 +599,57 @@ namespace TRT
                 std::unique_lock<std::mutex> lock(task_mutext_);
                 cond_.wait(lock, [this]()
                            { return b_stop_ || !task_queues_.empty(); });
-                if (b_stop_)
+                // 停止时先排空剩余任务，避免 future 收到 broken_promise
+                if (task_queues_.empty())
                     return;
                 task = std::move(task_queues_.front());
                 task_queues_.pop();
             }
 
-            // 执行任务
             if (task)
             {
                 try
                 {
-                    task->execute();
+                    task->promise().set_value(infer_task(ctx, task->args()));
                 }
-                catch (const std::exception &e)
+                catch (...)
                 {
-                    std::cerr << "[TRTInfer::Impl] Task execution failed: " << e.what() << "\n";
+                    task->promise().set_exception(std::current_exception());
                 }
             }
         }
     }
 
     /**
-     * @brief 分配 Stream 池资源, 败笔, StreamPool里面的池资源居然让TRTInfer的Impl分配
+     * @brief 为每个工作线程分配独占的 stream/context/显存/锁页缓冲
      */
     void TRTInfer::Impl::allocatePair()
     {
-        streampool_ = std::make_shared<StreamPool>(this->engine_.get(), num_threads_);
+        stream_ctxs_.reserve(num_threads_);
         for (int i = 0; i < num_threads_; i++)
         {
-            auto Decl = streampool_->acquire();
-            allocBindings(Decl.inputBindings, Decl.outputBindings, Decl.context);
-            allocOutBlobPinned(Decl.outputBlobsPin);
-            streampool_->release(std::move(Decl));
+            StreamContextDecl ctx;
+            cudaStreamCreate(&ctx.stream);
+            ctx.context = engine_->createExecutionContext();
+            if (!ctx.context)
+                throw std::runtime_error("Failed to create execution context");
+
+            allocBindings(ctx.inputBindings, ctx.outputBindings, ctx.context);
+            allocInBlobPinned(ctx.inputBlobsPin);
+            allocOutBlobPinned(ctx.outputBlobsPin);
+
+            stream_ctxs_.push_back(std::move(ctx));
         }
     }
 
     /**
-     * @brief 创建工作线程
+     * @brief 创建工作线程，每个线程绑定一个 ctx 下标
      */
     void TRTInfer::Impl::createWorkthreads()
     {
         for (int i = 0; i < num_threads_; i++)
-            thread_pool.emplace_back([this]()
-                                     { workThread(); });
+            thread_pool.emplace_back([this, i]()
+                                     { workThread(i); });
     }
 
     /**

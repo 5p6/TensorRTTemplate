@@ -14,7 +14,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 set(LIB_TYPE SHARED)
 set(CUDA_ROOT_DIR "/usr/local/cuda")
-set(TensorRT_ROOT_DIR "/root/TensorRT")
+set(TensorRT_ROOT_DIR "/home/ros/app/TensorRT-10.7.0.23")
 
 
 
@@ -36,15 +36,20 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
 else()
 # set TensorRT and cuda library and include directory for linux system
     set(TensorRT_INCLUDE_DIR "${TensorRT_ROOT_DIR}/include")
-    set(CUDA_INCLUDE_DIR "${CUDA_ROOT_DIR}/include")
-    file(GLOB CUDA_LIBS "${CUDA_ROOT_DIR}/lib64/*.so")
-    file(GLOB TensorRT_LIBS "${TensorRT_ROOT_DIR}/lib/*.so")
-    message("-- TensorRT libs : ${CUDA_LIBS}")
-    message("-- Cuda libs : ${TensorRT_LIBS}")
+    # apt-installed CUDA: headers in /usr/include, runtime lib in /usr/lib/x86_64-linux-gnu
+    set(CUDA_INCLUDE_DIR "/usr/include")
+    file(GLOB CUDA_LIBS "/usr/lib/x86_64-linux-gnu/libcudart.so")
+    set(TensorRT_LIBS
+        "${TensorRT_ROOT_DIR}/lib/libnvinfer.so"
+        "${TensorRT_ROOT_DIR}/lib/libnvinfer_plugin.so")
+    message("-- Cuda libs : ${CUDA_LIBS}")
+    message("-- TensorRT libs : ${TensorRT_LIBS}")
 endif()
 
 # find dependencies library
 find_package(OpenCV REQUIRED)
+find_package(CUDA REQUIRED)
+
 
 # include
 include_directories(
@@ -112,6 +117,11 @@ target_link_libraries(s2m2
 
 add_executable(liteanystereo example/LiteAnyStereo.cc)
 target_link_libraries(liteanystereo
+    trtemplate
+)
+
+add_executable(yolo_video example/YOLOVideo.cc)
+target_link_libraries(yolo_video
     trtemplate
 )
 

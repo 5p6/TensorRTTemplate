@@ -2,6 +2,7 @@
 #include "benchmark.h"
 #include <opencv2/opencv.hpp>
 #include <random>
+#include <cstdlib>
 using namespace TRT;
 namespace YOLO
 {
@@ -96,14 +97,17 @@ namespace YOLO
 
 int main(int argc, char *argv[])
 {
-    // 路径配置
+    // 参数 (可命令行覆盖): yolo [engine] [num_thread] [iters]
     std::string image_path = "./demo/bus.jpg";
-    std::string engine_path = "./yolov8n.engine";
-    int warmup_times = 10;
-    int test_times = 100;
+    std::string engine_path = argc > 1 ? argv[1] : "./yolov8n.engine";
+    int num_thread = argc > 2 ? std::atoi(argv[2]) : 4;
+    int iters = argc > 3 ? std::atoi(argv[3]) : 2000;
+
+    using Blob = std::unordered_map<std::string, cv::Mat>;
+    using FutureBlob = std::future<Blob>;
 
     // 加载模型 (使用工厂方法，延迟初始化)
-    auto model = TRT::TRTInfer::create(engine_path, 4);
+    auto model = TRT::TRTInfer::create(engine_path, num_thread);
 
     // 加载图像
     cv::Mat image = cv::imread(image_path);
@@ -118,51 +122,73 @@ int main(int argc, char *argv[])
     float scaleh = static_cast<float>(image.size().height) / 640.f;
     cv::Size2f scale_factor(scalew, scaleh);
 
-    // 预处理
-    std::vector<std::unordered_map<std::string, cv::Mat>> warmup_blobs;
-    std::vector<std::unordered_map<std::string, cv::Mat>> test_blobs;
-    for (int i = 0; i < warmup_times; i++) {
-        warmup_blobs.emplace_back(YOLO::preprocess(image));
-    }
-    for (int i = 0; i < test_times; i++) {
-        test_blobs.emplace_back(YOLO::preprocess(image));
-    }
+    // 预生成一组 blob 复用 (避免一次性占用过多主机内存)
+    const int pool_size = 64;
+    std::vector<Blob> blob_pool;
+    for (int i = 0; i < pool_size; i++)
+        blob_pool.emplace_back(YOLO::preprocess(image));
 
     // 预热
     std::cout << "\n=== Warmup ===" << std::endl;
-    std::vector<std::future<std::unordered_map<std::string, cv::Mat>>> results;
-    for (auto& blob : warmup_blobs) {
-        results.emplace_back(model->PostQueue(blob));
+    {
+        std::vector<FutureBlob> warm;
+        for (int i = 0; i < 300; i++)
+            warm.emplace_back(model->PostQueue(blob_pool[i % pool_size]));
+        for (auto &f : warm)
+            f.get();
     }
-    for (auto& result : results) {
-        result.get();
-    }
-    results.clear();
 
-    // 推理测试
-    std::cout << "\n=== Running inference ===" << std::endl;
-    auto start = std::chrono::high_resolution_clock::now();
-    for (auto& blob : test_blobs) {
-        results.emplace_back(model->PostQueue(blob));
-    }
+    std::cout << "\n=== Config: engine=" << engine_path
+              << ", num_thread=" << num_thread << ", iters=" << iters << " ===" << std::endl;
+
     cv::Mat output;
-    for (auto& result : results) {
-        output = result.get()["output0"];
-    }
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-    std::cout << "Inference time: " << duration.count() / test_times << " ms" << std::endl;
 
-    // post process
+    // (1) 纯推理 QPS —— blob 复用, 预处理不计入
+    {
+        std::vector<FutureBlob> results;
+        results.reserve(iters);
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < iters; i++)
+            results.emplace_back(model->PostQueue(blob_pool[i % pool_size]));
+        for (auto &result : results)
+            output = result.get()["output0"];
+        auto end = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(end - start).count();
+        std::cout << "[inference-only]            "
+                  << ms / iters << " ms/infer, " << iters * 1000.0 / ms << " QPS" << std::endl;
+    }
+
+    // (2) 端到端 QPS —— 每次都做 CPU 预处理后提交 (更贴近真实部署)
+    {
+        auto start = std::chrono::high_resolution_clock::now();
+        std::vector<FutureBlob> results;
+        results.reserve(iters);
+        for (int i = 0; i < iters; i++)
+        {
+            Blob blob = YOLO::preprocess(image);
+            results.emplace_back(model->PostQueue(blob));
+        }
+        for (auto &result : results)
+            result.get();
+        auto end = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(end - start).count();
+        std::cout << "[end-to-end +preprocess]    "
+                  << ms / iters << " ms/infer, " << iters * 1000.0 / ms << " QPS" << std::endl;
+    }
+
+    // post process (使用最后一次输出)
     cv::Mat result = YOLO::postprocess(output, image, scale_factor);
 
     // 保存结果
     cv::imwrite("./demo/yolo_output.png", result);
-    std::cout << "Saved output to yolo_output.png" << std::endl;
+    std::cout << "Saved output to ./demo/yolo_output.png" << std::endl;
 
-    // 显示
-    cv::imshow("output", result);
-    cv::waitKey();
+    // 仅在显式要求时弹窗 (YOLO_SHOW=1), 避免基准测试时 waitKey 阻塞
+    if (std::getenv("YOLO_SHOW"))
+    {
+        cv::imshow("output", result);
+        cv::waitKey();
+    }
 
     return 0;
 }
