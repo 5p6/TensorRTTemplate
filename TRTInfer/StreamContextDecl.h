@@ -50,10 +50,10 @@ private:
     {
         stream = other.stream;
         context = other.context;
-        inputBindings = std::exchange(other.inputBindings, nullptr);
-        outputBindings = std::exchange(other.outputBindings, nullptr);
-        inputBlobsPin = std::exchange(other.inputBlobsPin, nullptr);
-        outputBlobsPin = std::exchange(other.outputBlobsPin, nullptr);
+        inputBindings = std::exchange(other.inputBindings, {});
+        outputBindings = std::exchange(other.outputBindings, {});
+        inputBlobsPin = std::exchange(other.inputBlobsPin, {});
+        outputBlobsPin = std::exchange(other.outputBlobsPin, {});
         other.stream = nullptr;
         other.context = nullptr;
     }
