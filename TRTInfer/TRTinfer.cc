@@ -203,8 +203,10 @@ namespace TRT
         std::unordered_map<std::string, std::vector<int>> current_input_shapes_; /**< @brief 当前输入形状 */
 
         std::vector<std::string> input_names_, output_names_;              /**< @brief 输入输出名称 */
-        std::unordered_map<std::string, size_t> input_size_, output_size_; /**< @brief 输入输出字节大小 */
-        std::unordered_map<std::string, std::vector<int>> output_shape_;   /**< @brief 输出形状 */
+        std::unordered_map<std::string, size_t> input_size_, output_size_; /**< @brief 输入/输出已分配的最大字节容量 */
+        std::unordered_map<std::string, std::vector<int>> output_shape_;   /**< @brief 输出形状(引擎声明，动态维为 -1) */
+        std::unordered_map<std::string, bool> input_is_dynamic_;           /**< @brief 输入是否含动态维 */
+        std::unordered_map<std::string, std::vector<int>> input_max_dims_; /**< @brief 输入最大维度(动态取 profile kMAX) */
         Logger logger;                                                     /**< @brief 日志记录器 */
 
     private:
@@ -333,34 +335,66 @@ namespace TRT
         }
     }
 
+    /// std::vector<int> -> nvinfer1::Dims
+    static nvinfer1::Dims makeDims(const std::vector<int> &v)
+    {
+        nvinfer1::Dims d;
+        d.nbDims = static_cast<int>(v.size());
+        for (size_t i = 0; i < v.size(); ++i)
+            d.d[i] = v[i];
+        return d;
+    }
+
+    static std::vector<int> dimsToVec(const nvinfer1::Dims &d)
+    {
+        return std::vector<int>(d.d, d.d + d.nbDims);
+    }
+
     /**
      * @brief 获取所有输入张量信息
+     *
+     * 记录引擎声明形状(动态维为 -1)；对动态输入用 optimization profile 的 kMAX
+     * 求最大维度，据此确定按最大容量分配的字节数。
      */
     void TRTInfer::Impl::getInputProperty()
     {
         for (int i = 0; i < engine_->getNbIOTensors(); i++)
         {
             const char *name = engine_->getIOTensorName(i);
-            if (engine_->getTensorIOMode(name) == nvinfer1::TensorIOMode::kINPUT)
-            {
-                std::cout << "[TRTInfer::Impl] input tensor name : " << name
-                          << ", tensor shape : " << engine_->getTensorShape(name)
-                          << ", tensor type : " << engine_->getTensorDataType(name)
-                          << ", tensor format : " << engine_->getTensorFormatDesc(name)
-                          << std::endl;
+            if (engine_->getTensorIOMode(name) != nvinfer1::TensorIOMode::kINPUT)
+                continue;
 
-                input_names_.emplace_back(std::string(name));
-                input_size_[std::string(name)] = utility::getTensorbytes(
-                    engine_->getTensorShape(name), engine_->getTensorDataType(name));
+            std::cout << "[TRTInfer::Impl] input tensor name : " << name
+                      << ", tensor shape : " << engine_->getTensorShape(name)
+                      << ", tensor type : " << engine_->getTensorDataType(name)
+                      << ", tensor format : " << engine_->getTensorFormatDesc(name)
+                      << std::endl;
 
-                // 保存形状
-                nvinfer1::Dims dims = engine_->getTensorShape(name);
-                std::vector<int> dim;
-                dim.reserve(dims.nbDims);
-                for (int i = 0; i < dims.nbDims; i++)
-                    dim.emplace_back(dims.d[i]);
-                current_input_shapes_[name] = std::move(dim);
-            }
+            const std::string sname(name);
+            input_names_.emplace_back(sname);
+
+            // 引擎声明形状(动态维为 -1)，用于对外查询
+            const nvinfer1::Dims eng_dims = engine_->getTensorShape(name);
+            current_input_shapes_[sname] = dimsToVec(eng_dims);
+
+            // 是否含动态维
+            bool dynamic = false;
+            for (int k = 0; k < eng_dims.nbDims; ++k)
+                if (eng_dims.d[k] < 0)
+                    dynamic = true;
+            input_is_dynamic_[sname] = dynamic;
+
+            // 最大维度：动态取 profile(0) 的 kMAX，静态即声明形状
+            nvinfer1::Dims max_dims = dynamic
+                ? engine_->getProfileShape(name, 0, nvinfer1::OptProfileSelector::kMAX)
+                : eng_dims;
+            input_max_dims_[sname] = dimsToVec(max_dims);
+
+            // 按最大容量分配
+            input_size_[sname] = utility::getTensorbytes(max_dims, engine_->getTensorDataType(name));
+
+            if (dynamic)
+                std::cout << "[TRTInfer::Impl]   dynamic input, max shape : " << max_dims << std::endl;
         }
     }
 
@@ -483,13 +517,14 @@ namespace TRT
         // 等待完成
         cudaStreamSynchronize(ctx.stream);
 
-        // 封装结果
+        // 封装结果 (按本次推理的实际输出形状)
         BlobType tmp_results;
         for (auto &name : output_names_)
         {
+            std::vector<int> dims = dimsToVec(ctx.context->getTensorShape(name.c_str()));
             cv::Mat temp(
-                output_shape_[name].size(),
-                output_shape_[name].data(),
+                static_cast<int>(dims.size()),
+                dims.data(),
                 utility::typeRt2Cv(engine_->getTensorDataType(name.c_str())),
                 ctx.outputBlobsPin[name]);
             tmp_results[name] = temp.clone();
@@ -520,21 +555,37 @@ namespace TRT
             cpu_mat = cpu_mat.clone();
         }
 
-        // 大小校验 (使用初始化时缓存的字节数)
-        const size_t expect = input_size_.at(name);
+        const size_t capacity = input_size_.at(name); // 已分配的最大字节容量
         const size_t mat_size = cpu_mat.total() * cpu_mat.elemSize();
-        if (expect != mat_size)
+
+        if (input_is_dynamic_.at(name))
+        {
+            // 动态输入：按 cv::Mat 实际维度设置本次推理的输入形状
+            std::vector<int> dims;
+            dims.reserve(cpu_mat.dims);
+            for (int k = 0; k < cpu_mat.dims; ++k)
+                dims.push_back(cpu_mat.size[k]);
+            if (!ctx.context->setInputShape(name.c_str(), makeDims(dims)))
+            {
+                std::cerr << "[TRTInfer::Impl - ERROR] setInputShape failed for '" << name
+                          << "' (shape out of profile range?)" << std::endl;
+                throw std::runtime_error("[TRTInfer::Impl] setInputShape failed for " + name);
+            }
+            if (mat_size > capacity)
+                throw std::runtime_error("[TRTInfer::Impl] Input '" + name + "' exceeds max profile capacity");
+        }
+        else if (mat_size != capacity)
         {
             std::cerr << "[TRTInfer::Impl - ERROR] Input tensor size mismatch for '" << name << "': "
-                      << "required " << expect << " bytes, but cv::Mat has " << mat_size << " bytes" << std::endl;
+                      << "required " << capacity << " bytes, but cv::Mat has " << mat_size << " bytes" << std::endl;
             throw std::runtime_error("[TRTInfer::Impl] Input tensor size mismatch");
         }
 
         // host -> pinned -> device：先拷进锁页暂存，再异步 H2D，使传输可与其他流计算重叠
         void *pinned = ctx.inputBlobsPin.at(name);
-        std::memcpy(pinned, cpu_mat.data, expect);
+        std::memcpy(pinned, cpu_mat.data, mat_size); // 拷贝数据
 
-        cudaError_t err = cudaMemcpyAsync(bind_it->second, pinned, expect, cudaMemcpyHostToDevice, ctx.stream);
+        cudaError_t err = cudaMemcpyAsync(bind_it->second, pinned, mat_size, cudaMemcpyHostToDevice, ctx.stream);
         if (err != cudaSuccess)
         {
             std::cerr << "[TRTInfer::Impl] CUDA memcpyAsync (H2D) failed: " << cudaGetErrorString(err) << std::endl;
@@ -552,13 +603,13 @@ namespace TRT
         nvinfer1::Dims out_shape = ctx.context->getTensorShape(name.c_str());
         size_t actual_size = utility::getTensorbytes(out_shape, engine_->getTensorDataType(name.c_str()));
 
-        // 验证缓冲区
-        if (actual_size != output_size_.at(name))
+        // 验证不超过已分配的最大容量 (动态时实际可小于容量)
+        if (actual_size > output_size_.at(name))
         {
-            std::cerr << "[ERROR] Output buffer size mismatch for '" << name << "': "
-                      << "actual " << actual_size << " bytes, but " << output_size_.at(name)
-                      << " bytes allocated" << std::endl;
-            throw std::runtime_error("Output buffer size mismatch");
+            std::cerr << "[ERROR] Output exceeds allocated capacity for '" << name << "': "
+                      << "actual " << actual_size << " bytes, capacity " << output_size_.at(name)
+                      << " bytes" << std::endl;
+            throw std::runtime_error("Output exceeds allocated capacity");
         }
 
         // 拷贝到主机
@@ -633,6 +684,17 @@ namespace TRT
             ctx.context = engine_->createExecutionContext();
             if (!ctx.context)
                 throw std::runtime_error("Failed to create execution context");
+
+            // 动态输入先设到最大形状，以便推导输出最大容量并按最大分配
+            for (const auto &name : input_names_)
+                if (input_is_dynamic_[name])
+                    if (!ctx.context->setInputShape(name.c_str(), makeDims(input_max_dims_[name])))
+                        throw std::runtime_error("setInputShape(max) failed for " + name);
+
+            // 在最大输入下推导每个输出的最大容量字节
+            for (const auto &name : output_names_)
+                output_size_[name] = utility::getTensorbytes(
+                    ctx.context->getTensorShape(name.c_str()), engine_->getTensorDataType(name.c_str()));
 
             allocBindings(ctx.inputBindings, ctx.outputBindings, ctx.context);
             allocInBlobPinned(ctx.inputBlobsPin);

@@ -18,11 +18,11 @@
  */
 struct StreamContextDecl
 {
-    cudaStream_t stream = nullptr;                                          /**< @brief CUDA 流 */
-    nvinfer1::IExecutionContext *context = nullptr;                         /**< @brief TensorRT 执行上下文 */
+    cudaStream_t stream = nullptr;                                         /**< @brief CUDA 流 */
+    nvinfer1::IExecutionContext *context = nullptr;                        /**< @brief TensorRT 执行上下文 */
     std::unordered_map<std::string, void *> inputBindings, outputBindings; /**< @brief 输入/输出显存 (device) */
-    std::unordered_map<std::string, void *> inputBlobsPin;                  /**< @brief 输入锁页暂存 (pinned host) */
-    std::unordered_map<std::string, void *> outputBlobsPin;                 /**< @brief 输出锁页暂存 (pinned host) */
+    std::unordered_map<std::string, void *> inputBlobsPin;                 /**< @brief 输入锁页暂存 (pinned host) */
+    std::unordered_map<std::string, void *> outputBlobsPin;                /**< @brief 输出锁页暂存 (pinned host) */
 
     StreamContextDecl() = default;
 
@@ -50,10 +50,10 @@ private:
     {
         stream = other.stream;
         context = other.context;
-        inputBindings = std::move(other.inputBindings);
-        outputBindings = std::move(other.outputBindings);
-        inputBlobsPin = std::move(other.inputBlobsPin);
-        outputBlobsPin = std::move(other.outputBlobsPin);
+        inputBindings = std::exchange(other.inputBindings, nullptr);
+        outputBindings = std::exchange(other.outputBindings, nullptr);
+        inputBlobsPin = std::exchange(other.inputBlobsPin, nullptr);
+        outputBlobsPin = std::exchange(other.outputBlobsPin, nullptr);
         other.stream = nullptr;
         other.context = nullptr;
     }

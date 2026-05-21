@@ -125,6 +125,11 @@ target_link_libraries(yolo_video
     trtemplate
 )
 
+add_executable(yolo_batch example/YOLOBatch.cc)
+target_link_libraries(yolo_batch
+    trtemplate
+)
+
 add_executable(liteanystereo_video example/LiteAnyStereoVideo.cc)
 target_link_libraries(liteanystereo_video
     trtemplate
