@@ -96,11 +96,8 @@ include_directories(
 )
 # generate library
 add_library(trtemplate ${LIB_TYPE}
-<<<<<<< HEAD
-=======
     ${PROJECT_SOURCE_DIR}/TRTInfer/StreamContextDecl.h
     ${PROJECT_SOURCE_DIR}/TRTInfer/StreamContextDecl.cc
->>>>>>> main_multistream
     ${PROJECT_SOURCE_DIR}/TRTInfer/config.h
     ${PROJECT_SOURCE_DIR}/TRTInfer/TRTinfer.h
     ${PROJECT_SOURCE_DIR}/TRTInfer/benchmark.h
