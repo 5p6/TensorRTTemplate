@@ -4,7 +4,7 @@
 #include <fstream>
 #include <vector>
 #include <chrono>
-
+using namespace TRT;
 namespace LiteAnyStereo
 {
     // Padding information structure
@@ -291,7 +291,11 @@ int main(int argc, char *argv[])
 
         // Load model
         std::cout << "\nLoading TensorRT engine..." << std::endl;
+<<<<<<< HEAD
         auto model = TRTInfer::create(engine_file);
+=======
+        auto model = TRT::TRTInfer::create(engine_file, 4);
+>>>>>>> main_multistream
         std::cout << "Model loaded successfully!" << std::endl;
 
         // Setup video writer

@@ -1,7 +1,28 @@
 #include "utility.h"
 namespace utility
 {
+    TensorShape vectorToShape(const std::vector<int> &vec)
+    {
+        TensorShape shape;
+        if (vec.size() == 4)
+        {
+            shape.d = 0;
+            shape.n = vec[0];
+            shape.c = vec[1];
+            shape.h = vec[2];
+            shape.w = vec[3];
+        }
+        else
+        {
 
+            shape.n = vec[0];
+            shape.d = vec[1];
+            shape.c = vec[2];
+            shape.h = vec[3];
+            shape.w = vec[4];
+        }
+        return shape;
+    }
     void *safeCudaMalloc(size_t memSize)
     {
         void *deviceMem;
@@ -30,6 +51,37 @@ namespace utility
         ptr = nullptr; // Set pointer to nullptr after freeing
         return true;
     }
+
+    void *safeCudaMallocHost(size_t memSize)
+    {
+        void *deviceMem;
+        cudaError_t status = cudaMallocHost(&deviceMem, memSize);
+        if (status != cudaSuccess)
+        {
+            std::cerr << "cudaMallocHost failed: " << cudaGetErrorString(status) << std::endl;
+            return nullptr;
+        }
+        return deviceMem;
+    }
+
+    bool safeCudaFreeHost(void *&ptr)
+    {
+        if (ptr == nullptr)
+        {
+            std::cerr << "Pointer is already nullptr." << std::endl;
+            return false;
+        }
+        cudaError_t result = cudaFreeHost(ptr);
+        if (result != cudaSuccess)
+        {
+            std::cerr << "Failed to free CPU Pinned memory: " << cudaGetErrorString(result) << std::endl;
+            return false;
+        }
+        std::cout << "CPU Pinned memory successfully freed." << std::endl;
+        ptr = nullptr; // Set pointer to nullptr after freeing
+        return true;
+    }
+
     size_t getTypebytes(const nvinfer1::DataType &type)
     {
         switch (type)
@@ -47,7 +99,7 @@ namespace utility
         case nvinfer1::DataType::kINT32:
             return 4;
         case nvinfer1::DataType::kINT4:
-            return 1;  // INT4 packed, minimum 1 byte for storage
+            return 1; // INT4 packed, minimum 1 byte for storage
         case nvinfer1::DataType::kINT64:
             return 8;
         case nvinfer1::DataType::kINT8:
@@ -55,7 +107,7 @@ namespace utility
         case nvinfer1::DataType::kUINT8:
             return 1;
         }
-        return 0;  // Unknown type
+        return 0; // Unknown type
     }
 
     size_t getTensorbytes(const nvinfer1::Dims &dim, const nvinfer1::DataType &type)

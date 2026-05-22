@@ -2,7 +2,7 @@
 #include "benchmark.h"
 #include <opencv2/opencv.hpp>
 #include <random>
-
+using namespace TRT;
 namespace SegFormer
 {
     std::unordered_map<std::string, cv::Mat> preprocess(const cv::Mat &img)
@@ -80,18 +80,35 @@ namespace SegFormer
 
 int main(int argc, char *argv[])
 {
+    // 路径配置
+    std::string image_path = "demo/image.png";
+    std::string engine_path = "segformer.engine";
+    int warmup_times = 10;
+    int test_times = 100;
+
+    // 加载模型
+    auto model = TRT::TRTInfer::create(engine_path, 4);
+
     // image
-    cv::Mat image = cv::imread("demo/image.png");
+    cv::Mat image = cv::imread(image_path);
 
     if (image.empty())
     {
-        std::cerr << "Error: Could not load image from demo/image.png" << std::endl;
+        std::cerr << "Error: Could not load image from " << image_path << std::endl;
         return -1;
     }
 
-    // preprocess
-    auto input_blob = SegFormer::preprocess(image);
+    // 预处理
+    std::vector<std::unordered_map<std::string, cv::Mat>> warmup_blobs;
+    std::vector<std::unordered_map<std::string, cv::Mat>> test_blobs;
+    for (int i = 0; i < warmup_times; i++) {
+        warmup_blobs.emplace_back(SegFormer::preprocess(image));
+    }
+    for (int i = 0; i < test_times; i++) {
+        test_blobs.emplace_back(SegFormer::preprocess(image));
+    }
 
+<<<<<<< HEAD
     // model
     auto model = TRTInfer::create("segformer.engine");
 
@@ -102,9 +119,35 @@ int main(int argc, char *argv[])
 
     // inference
     auto output_blob = (*model)(input_blob);
+=======
+    // 预热
+    std::cout << "\n=== Warmup ===" << std::endl;
+    std::vector<std::future<std::unordered_map<std::string, cv::Mat>>> results;
+    for (auto& blob : warmup_blobs) {
+        results.emplace_back(model->PostQueue(blob));
+    }
+    for (auto& result : results) {
+        result.get();
+    }
+    results.clear();
+
+    // 推理测试
+    std::cout << "\n=== Running inference ===" << std::endl;
+    auto start = std::chrono::high_resolution_clock::now();
+    for (auto& blob : test_blobs) {
+        results.emplace_back(model->PostQueue(blob));
+    }
+    cv::Mat output;
+    for (auto& result : results) {
+        output = result.get()["output"];
+    }
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+    std::cout << "Inference time: " << duration.count() / test_times << " ms" << std::endl;
+>>>>>>> main_multistream
 
     // reshape 1x1x512x512 to 512 x 512
-    cv::Mat mat2d = output_blob["output"].reshape(0, 512).clone();
+    cv::Mat mat2d = output.reshape(0, 512).clone();
 
     // convert unsigned char type
     mat2d.convertTo(mat2d, CV_8U);
@@ -116,6 +159,11 @@ int main(int argc, char *argv[])
     // for mask
     cv::resize(image, image_512, cv::Size(512, 512));
     cv::addWeighted(image_512, 0.7, viz, 0.3, 0, mask);
+
+    // 保存结果
+    cv::imwrite("./demo/segformer_output.png", viz);
+    cv::imwrite("./demo/segformer_mask.png", mask);
+    std::cout << "Saved outputs to segformer_output.png and segformer_mask.png" << std::endl;
 
     // show result
     cv::imshow("output", viz);

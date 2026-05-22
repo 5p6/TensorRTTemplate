@@ -2,7 +2,8 @@
 #include "benchmark.h"
 #include <opencv2/opencv.hpp>
 #include <random>
-
+#include <cstdlib>
+using namespace TRT;
 namespace YOLO
 {
     struct Detection
@@ -96,12 +97,23 @@ namespace YOLO
 
 int main(int argc, char *argv[])
 {
-    // image
-    cv::Mat image = cv::imread("./demo/bus.jpg");
+    // 参数 (可命令行覆盖): yolo [engine] [num_thread] [iters]
+    std::string image_path = "./demo/bus.jpg";
+    std::string engine_path = argc > 1 ? argv[1] : "./yolov8n.engine";
+    int num_thread = argc > 2 ? std::atoi(argv[2]) : 4;
+    int iters = argc > 3 ? std::atoi(argv[3]) : 50;
 
+    using Blob = std::unordered_map<std::string, cv::Mat>;
+    using FutureBlob = std::future<Blob>;
+
+    // 加载模型 (使用工厂方法，延迟初始化)
+    auto model = TRT::TRTInfer::create(engine_path, num_thread);
+
+    // 加载图像
+    cv::Mat image = cv::imread(image_path);
     if (image.empty())
     {
-        std::cerr << "Error: Could not load image from ./demo/bus.jpg" << std::endl;
+        std::cerr << "Error: Could not load image from " << image_path << std::endl;
         return -1;
     }
 
@@ -110,9 +122,13 @@ int main(int argc, char *argv[])
     float scaleh = static_cast<float>(image.size().height) / 640.f;
     cv::Size2f scale_factor(scalew, scaleh);
 
-    // preprocess
-    auto input_blob = YOLO::preprocess(image);
+    // 预生成一组 blob 复用 (避免一次性占用过多主机内存)
+    const int pool_size = 64;
+    std::vector<Blob> blob_pool;
+    for (int i = 0; i < pool_size; i++)
+        blob_pool.emplace_back(YOLO::preprocess(image));
 
+<<<<<<< HEAD
     // model
     auto model = TRTInfer::create("./yolov8n.engine");
 
@@ -123,13 +139,69 @@ int main(int argc, char *argv[])
 
     // inference
     auto output_blob = (*model)(input_blob);
+=======
+    // 预热
+    std::cout << "\n=== Warmup ===" << std::endl;
+    {
+        std::vector<FutureBlob> warm;
+        for (int i = 0; i < 300; i++)
+            warm.emplace_back(model->PostQueue(blob_pool[i % pool_size]));
+        for (auto &f : warm)
+            f.get();
+    }
 
-    // post process
-    cv::Mat result = YOLO::postprocess(output_blob["output0"], image, scale_factor);
+    std::cout << "\n=== Config: engine=" << engine_path
+              << ", num_thread=" << num_thread << ", iters=" << iters << " ===" << std::endl;
 
-    // show result
-    cv::imshow("output", result);
-    cv::waitKey();
+    cv::Mat output;
+>>>>>>> main_multistream
+
+    // (1) 纯推理 QPS —— blob 复用, 预处理不计入
+    {
+        std::vector<FutureBlob> results;
+        results.reserve(iters);
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < iters; i++)
+            results.emplace_back(model->PostQueue(blob_pool[i % pool_size]));
+        for (auto &result : results)
+            output = result.get()["output0"];
+        auto end = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(end - start).count();
+        std::cout << "[inference-only]            "
+                  << ms / iters << " ms/infer, " << iters * 1000.0 / ms << " QPS" << std::endl;
+    }
+
+    // (2) 端到端 QPS —— 每次都做 CPU 预处理后提交 (更贴近真实部署)
+    {
+        auto start = std::chrono::high_resolution_clock::now();
+        std::vector<FutureBlob> results;
+        results.reserve(iters);
+        for (int i = 0; i < iters; i++)
+        {
+            Blob blob = YOLO::preprocess(image);
+            results.emplace_back(model->PostQueue(blob));
+        }
+        for (auto &result : results)
+            result.get();
+        auto end = std::chrono::high_resolution_clock::now();
+        double ms = std::chrono::duration<double, std::milli>(end - start).count();
+        std::cout << "[end-to-end +preprocess]    "
+                  << ms / iters << " ms/infer, " << iters * 1000.0 / ms << " QPS" << std::endl;
+    }
+
+    // post process (使用最后一次输出)
+    cv::Mat result = YOLO::postprocess(output, image, scale_factor);
+
+    // 保存结果
+    cv::imwrite("./demo/yolo_output.png", result);
+    std::cout << "Saved output to ./demo/yolo_output.png" << std::endl;
+
+    // 仅在显式要求时弹窗 (YOLO_SHOW=1), 避免基准测试时 waitKey 阻塞
+    if (std::getenv("YOLO_SHOW"))
+    {
+        cv::imshow("output", result);
+        cv::waitKey();
+    }
 
     return 0;
 }
