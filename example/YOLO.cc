@@ -128,18 +128,6 @@ int main(int argc, char *argv[])
     for (int i = 0; i < pool_size; i++)
         blob_pool.emplace_back(YOLO::preprocess(image));
 
-<<<<<<< HEAD
-    // model
-    auto model = TRTInfer::create("./yolov8n.engine");
-
-    // Run benchmark with warmup
-    std::cout << "\n=== YOLOv8 Object Detection Benchmark ===" << std::endl;
-    Benchmark::runModel(*model, input_blob, 10, 100);
-    std::cout << "\n=== Running single inference for visualization ===" << std::endl;
-
-    // inference
-    auto output_blob = (*model)(input_blob);
-=======
     // 预热
     std::cout << "\n=== Warmup ===" << std::endl;
     {
@@ -154,7 +142,6 @@ int main(int argc, char *argv[])
               << ", num_thread=" << num_thread << ", iters=" << iters << " ===" << std::endl;
 
     cv::Mat output;
->>>>>>> main_multistream
 
     // (1) 纯推理 QPS —— blob 复用, 预处理不计入
     {
