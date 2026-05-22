@@ -44,8 +44,7 @@ namespace TRT
          * @param  num_thread    工作线程数量，默认为 1
          * @return std::shared_ptr<TRTInfer> 返回智能指针管理的实例
          *
-         * 该方法采用延迟初始化策略，构造对象时不会立即加载引擎，
-         * 只有在实际调用推理或查询张量信息时才会初始化资源。
+         * 该方法采用立刻初始化策略
          */
         static std::shared_ptr<TRTInfer> create(const std::string &engine_path, int num_thread = 1);
 

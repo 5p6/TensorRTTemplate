@@ -101,7 +101,7 @@ int main(int argc, char *argv[])
     std::string image_path = "./demo/bus.jpg";
     std::string engine_path = argc > 1 ? argv[1] : "./yolov8n.engine";
     int num_thread = argc > 2 ? std::atoi(argv[2]) : 4;
-    int iters = argc > 3 ? std::atoi(argv[3]) : 2000;
+    int iters = argc > 3 ? std::atoi(argv[3]) : 50;
 
     using Blob = std::unordered_map<std::string, cv::Mat>;
     using FutureBlob = std::future<Blob>;

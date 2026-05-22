@@ -386,8 +386,8 @@ namespace TRT
 
             // 最大维度：动态取 profile(0) 的 kMAX，静态即声明形状
             nvinfer1::Dims max_dims = dynamic
-                ? engine_->getProfileShape(name, 0, nvinfer1::OptProfileSelector::kMAX)
-                : eng_dims;
+                                          ? engine_->getProfileShape(name, 0, nvinfer1::OptProfileSelector::kMAX)
+                                          : eng_dims;
             input_max_dims_[sname] = dimsToVec(max_dims);
 
             // 按最大容量分配
@@ -455,7 +455,6 @@ namespace TRT
             context->setOutputTensorAddress(output_names_[i].c_str(), outputBindings[output_names_[i]]);
         }
     }
-
 
     void TRTInfer::Impl::allocInBlobPinned(std::unordered_map<std::string, void *> &inputBlobPin)
     {
@@ -719,7 +718,15 @@ namespace TRT
      */
     void TRTInfer::Init()
     {
-        pImpl->Initialized();
+        try
+        {
+            pImpl->Initialized();
+        }
+        catch (const std::exception &e)
+        {
+            std::cerr << e.what() << '\n';
+            exit(0);
+        }
     }
 
     /**
