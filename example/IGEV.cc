@@ -155,42 +155,19 @@ int main(int argc, char *argv[])
     
     OriginalSize orig_left, orig_right;
 
-<<<<<<< HEAD
-    // 加载模型 (使用工厂方法创建实例)
-    auto model = TRTInfer::create(engine_path);
-=======
-
-
-
     // 加载模型
-    auto model =  TRT::TRTInfer::create(engine_path, 4);
->>>>>>> main_multistream
+    auto model = TRT::TRTInfer::create(engine_path, 4);
 
     // 输出尺寸预备
     std::vector<std::string> output_names = model->getOutputNames();
     TensorShape outputshape = model->getOutputShape(output_names[0]);
 
     // 预处理
-<<<<<<< HEAD
-    auto input_blob = preprocess(left_path, right_path, orig_left, orig_right);
-
-    // 打印输入信息
-    std::cout << "Input shape - left: " << input_blob["left"].size << " (d=" << input_blob["left"].size.p[0]
-              << ", c=" << input_blob["left"].size.p[1]
-              << ", h=" << input_blob["left"].size.p[2]
-              << ", w=" << input_blob["left"].size.p[3] << ")" << std::endl;
-    // 预热
-    std::cout << "\n=== Warmup (10 iterations) ===" << std::endl;
-    for (int i = 0; i < 10; i++)
-    {
-        (*model)(input_blob);
-=======
     for(int i = 0; i < warmup_times; i++){
         warmup_inputblobs.emplace_back(preprocess(left_path, right_path, orig_left, orig_right));
     }
     for(int i = 0; i < test_times; i++){
         test_inputblobs.emplace_back(preprocess(left_path, right_path, orig_left, orig_right));
->>>>>>> main_multistream
     }
 
     // auto input_blob = preprocess(left_path, right_path, orig_left, orig_right);
@@ -216,9 +193,6 @@ int main(int argc, char *argv[])
     // 推理
     std::cout << "\n=== Running inference ===" << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
-<<<<<<< HEAD
-    auto output_blob = (*model)(input_blob);
-=======
     for (auto& test_blob : test_inputblobs)
     {
         results.emplace_back(model->PostQueue(test_blob));
@@ -229,7 +203,6 @@ int main(int argc, char *argv[])
         r = result.get()["disparity"];
     }
     // auto output_blob = model(input_blob);
->>>>>>> main_multistream
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Inference time: " << duration.count() / 100 << " ms" << std::endl;

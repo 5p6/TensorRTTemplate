@@ -82,17 +82,6 @@ int main(int argc, char *argv[])
         test_blobs.emplace_back(preprocess(left, right));
     }
 
-<<<<<<< HEAD
-    // model
-    auto model = TRTInfer::create("S2M2.engine");
-
-    // Run benchmark with warmup
-    std::cout << "\n=== S2M2 Stereo Matching Benchmark ===" << std::endl;
-    Benchmark::runModel(*model, input_blob, 10, 100);
-    std::cout << "\n=== Running single inference for visualization ===" << std::endl;
-
-    auto output_blob = (*model)(input_blob); // inference
-=======
     // 预热
     std::cout << "\n=== Warmup ===" << std::endl;
     std::vector<std::future<std::unordered_map<std::string, cv::Mat>>> results;
@@ -117,7 +106,6 @@ int main(int argc, char *argv[])
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Inference time: " << duration.count() / test_times << " ms" << std::endl;
->>>>>>> main_multistream
 
     cv::Mat dst, dst_conf;
     // post process

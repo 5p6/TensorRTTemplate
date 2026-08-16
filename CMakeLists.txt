@@ -15,12 +15,12 @@ endif()
 # ---- 可通过 -D 覆盖的路径与选项 ----
 # 例:
 #   cmake -S . -B build \
-#     -DTensorRT_ROOT_DIR=/opt/TensorRT-10.7.0.23 \
-#     -DCUDA_ROOT_DIR=/usr/local/cuda-12.4 \
+#     -DTensorRT_ROOT_DIR=/home/ros/lib/TensorRT-10.14 \
+#     -DCUDA_ROOT_DIR=/usr/local/cuda-13.1 \
 #     -DLIB_TYPE=STATIC
 # 也支持别名 -DTensorRT_ROOT / -DCUDA_ROOT。
-set(TensorRT_ROOT_DIR "/home/ros/app/TensorRT-10.7.0.23" CACHE PATH "TensorRT 10.x 安装根目录")
-set(CUDA_ROOT_DIR     "/usr"                  CACHE PATH "CUDA Toolkit 安装根目录")
+set(TensorRT_ROOT_DIR "/home/ros/lib/TensorRT-10.14" CACHE PATH "TensorRT 10.x 安装根目录")
+set(CUDA_ROOT_DIR     "/usr/local/cuda-13.1"          CACHE PATH "CUDA Toolkit 安装根目录")
 set(LIB_TYPE          "SHARED"                           CACHE STRING "库类型: SHARED 或 STATIC")
 
 # 兼容常见别名 -DTensorRT_ROOT / -DCUDA_ROOT
@@ -58,22 +58,28 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Windows")
 else()
     # set TensorRT and cuda library and include directory for linux system
     set(TensorRT_INCLUDE_DIR "${TensorRT_ROOT_DIR}/include")
-    set(TensorRT_LIBS
-        "${TensorRT_ROOT_DIR}/lib/libnvinfer.so"
-        "${TensorRT_ROOT_DIR}/lib/libnvinfer_plugin.so")
+    set(CUDA_INCLUDE_DIR "${CUDA_ROOT_DIR}/include")
 
-    # CUDA: 优先用 CUDA_ROOT_DIR (标准 toolkit 布局)，找不到则回退到发行版(apt)布局
-    if(EXISTS "${CUDA_ROOT_DIR}/include/cuda_runtime.h")
-        set(CUDA_INCLUDE_DIR "${CUDA_ROOT_DIR}/include")
-        find_library(CUDART_LIB cudart
-            HINTS "${CUDA_ROOT_DIR}/lib64" "${CUDA_ROOT_DIR}/lib"
-                  "${CUDA_ROOT_DIR}/targets/x86_64-linux/lib"
-            NO_DEFAULT_PATH)
-    else()
-        message(STATUS "在 ${CUDA_ROOT_DIR} 未找到 CUDA toolkit，回退到系统(apt)路径")
-        set(CUDA_INCLUDE_DIR "/usr/include")
-        find_library(CUDART_LIB cudart HINTS /usr/lib/x86_64-linux-gnu)
+    # TensorRT: 用 find_library 查找 nvinfer / nvinfer_plugin
+    find_library(NVINFER_LIB nvinfer
+        HINTS "${TensorRT_ROOT_DIR}/lib"
+              "${TensorRT_ROOT_DIR}/targets/x86_64-linux-gnu/lib"
+        NO_DEFAULT_PATH)
+    find_library(NVINFER_PLUGIN_LIB nvinfer_plugin
+        HINTS "${TensorRT_ROOT_DIR}/lib"
+              "${TensorRT_ROOT_DIR}/targets/x86_64-linux-gnu/lib"
+        NO_DEFAULT_PATH)
+    if(NOT NVINFER_LIB OR NOT NVINFER_PLUGIN_LIB)
+        message(FATAL_ERROR "找不到 TensorRT 库 (libnvinfer.so / libnvinfer_plugin.so)。\n"
+                            "请用 -DTensorRT_ROOT_DIR=<路径> 指定 TensorRT 10.x 根目录。")
     endif()
+    set(TensorRT_LIBS "${NVINFER_LIB}" "${NVINFER_PLUGIN_LIB}")
+
+    # CUDA: 用 find_library 查找 cudart
+    find_library(CUDART_LIB cudart
+        HINTS "${CUDA_ROOT_DIR}/lib64" "${CUDA_ROOT_DIR}/lib"
+              "${CUDA_ROOT_DIR}/targets/x86_64-linux/lib"
+        NO_DEFAULT_PATH)
     if(NOT CUDART_LIB)
         message(FATAL_ERROR "找不到 libcudart。请用 -DCUDA_ROOT_DIR=<路径> 指定 CUDA Toolkit 根目录。")
     endif()
@@ -84,7 +90,6 @@ endif()
 
 # find dependencies library
 find_package(OpenCV REQUIRED)
-find_package(CUDA REQUIRED)
 
 
 # include

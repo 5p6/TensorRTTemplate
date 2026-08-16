@@ -307,21 +307,12 @@ int main(int argc, char *argv[])
 
         // Load model (使用工厂方法创建实例)
         std::cout << "\nLoading TensorRT engine..." << std::endl;
-<<<<<<< HEAD
-        auto model = TRTInfer::create(engine_file);
-=======
         auto model = TRT::TRTInfer::create(engine_file, 4);
         std::cout << "Model loaded successfully!" << std::endl;
->>>>>>> main_multistream
 
         // Benchmark mode
         if (benchmark_mode)
         {
-<<<<<<< HEAD
-            std::cout << "\n=== Benchmark ===" << std::endl;
-            Benchmark::runModel(*model, input_blob, warmup_runs, benchmark_runs);
-            std::cout << "\n=== Running inference for output ===" << std::endl;
-=======
             // 预热
             std::cout << "\n=== Warmup ===" << std::endl;
             std::vector<std::future<std::unordered_map<std::string, cv::Mat>>> warmup_results;
@@ -350,7 +341,6 @@ int main(int argc, char *argv[])
             auto end = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
             std::cout << "Inference time: " << duration.count() / benchmark_runs << " ms" << std::endl;
->>>>>>> main_multistream
         }
 
         // Inference

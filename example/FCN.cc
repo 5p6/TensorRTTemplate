@@ -111,18 +111,6 @@ int main(int argc, char *argv[])
         test_blobs.emplace_back(FCN::preprocess(image));
     }
 
-<<<<<<< HEAD
-    // model
-    auto model = TRTInfer::create("fcn.engine");
-
-    // Run benchmark with warmup
-    std::cout << "\n=== FCN Semantic Segmentation Benchmark ===" << std::endl;
-    Benchmark::runModel(*model, input_blob, 10, 100);
-    std::cout << "\n=== Running single inference for visualization ===" << std::endl;
-
-    // inference
-    auto output_blob = (*model)(input_blob);
-=======
     // 预热
     std::cout << "\n=== Warmup ===" << std::endl;
     std::vector<std::future<std::unordered_map<std::string, cv::Mat>>> results;
@@ -147,7 +135,6 @@ int main(int argc, char *argv[])
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
     std::cout << "Inference time: " << duration.count() / test_times << " ms" << std::endl;
->>>>>>> main_multistream
 
     // reshape 1x1x512x512 to 512 x 512
     cv::Mat mat2d = output.reshape(0, 512).clone();
